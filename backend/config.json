@@ -1,0 +1,75 @@
+{
+  "application": {
+    "name": "IMX8MP Web Server",
+    "version": "1.0.0"
+  },
+  "tabs": [
+    {
+      "id": "sensors",
+      "title": "Sensors",
+      "enabled": true,
+      "sensors": [
+        {
+          "name": "Temperature",
+          "topic": "sensor/temperature",
+          "description": "CPU Temperature",
+          "unit": "°C",
+          "refresh_interval": 5000,
+          "threshold": { "max": 80, "min": 0 }
+        },
+        {
+          "name": "Compass",
+          "topic": "sensor/compass",
+          "description": "Compass Heading",
+          "unit": "degrees",
+          "refresh_interval": 2000
+        },
+        {
+          "name": "GPS",
+          "topic": "sensor/gps",
+          "description": "GPS Location",
+          "unit": "decimal_degrees",
+          "refresh_interval": 10000
+        }
+      ]
+    },
+    {
+      "id": "files",
+      "title": "Files",
+      "enabled": true,
+      "upload": {
+        "button_name": "Upload File",
+        "upload_directory": "./backend/uploads",
+        "allowed_extensions": [".txt", ".csv", ".jpg"],
+        "max_file_size": 10485760
+      },
+      "download": {
+        "button_name": "Download File",
+        "root_directory": "/home/linux-1",
+        "allowed_extensions": [".txt", ".csv", ".jpg"]
+      }
+    },
+    {
+      "id": "actions",
+      "title": "Actions",
+      "enabled": true,
+      "actions": [
+        {
+          "button_name": "Reboot Device",
+          "publish_topic": "device/reboot"
+        },
+        {
+          "button_name": "Send Message",
+          "publish_topic": "device/message",
+          "text_input": true,
+          "subscribe_ack_topic": "device/message/ack"
+        }
+      ]
+    }
+  ],
+  "broker": {
+    "host": "localhost",
+    "port": 1883,
+    "client_id": "web-client"
+  }
+} 

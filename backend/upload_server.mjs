@@ -1,0 +1,260 @@
+import express from 'express';
+import multer from 'multer';
+import cors from 'cors';
+import mqtt from 'mqtt';
+import path from 'path';
+import fs from 'fs';
+import http from 'http';
+import { WebSocketServer } from 'ws';
+import * as sensorProto from './sensor_pb.js';
+import config from './config.json' assert { type: 'json' };
+
+const __dirname = path.dirname(new URL(import.meta.url).pathname);
+const filesTab = config.tabs.find(tab => tab.id === 'files');
+const UPLOAD_DIR = filesTab?.upload?.upload_directory
+  ? path.isAbsolute(filesTab.upload.upload_directory)
+    ? filesTab.upload.upload_directory
+    : path.join(__dirname, filesTab.upload.upload_directory)
+  : path.join(__dirname, 'uploads');
+const ALLOWED_EXTENSIONS = filesTab?.upload?.allowed_extensions || [];
+
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+  filename: (req, file, cb) => cb(null, file.originalname),
+});
+const fileFilter = (req, file, cb) => {
+  const ext = path.extname(file.originalname);
+  if (ALLOWED_EXTENSIONS.includes(ext)) cb(null, true);
+  else cb(new Error('File type not allowed'), false);
+};
+const upload = multer({ storage, fileFilter });
+
+const app = express();
+app.use(cors());
+
+let latestSensorData = {};
+
+function updateLatestSensorData(topic, formatted) {
+  // Map topic to generic key
+  let key = topic.split('/')[1] || topic;
+  latestSensorData[key] = formatted;
+}
+
+app.get('/api/files', (req, res) => {
+  fs.readdir(UPLOAD_DIR, (err, files) => {
+    if (err) return res.status(500).json({ error: 'Failed to list files' });
+    const fileList = files.map(filename => {
+      const stats = fs.statSync(path.join(UPLOAD_DIR, filename));
+      return {
+        filename,
+        size: stats.size,
+        modified: stats.mtime
+      };
+    });
+    res.json(fileList);
+  });
+});
+
+app.delete('/api/delete/:filename', (req, res) => {
+  const filePath = path.join(UPLOAD_DIR, req.params.filename);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+  fs.unlink(filePath, err => {
+    if (err) return res.status(500).json({ error: 'Failed to delete file' });
+    res.json({ success: true });
+  });
+});
+
+app.get('/api/sensors', (req, res) => {
+  res.json(latestSensorData);
+});
+
+app.get('/api/system', async (req, res) => {
+  const exec = (await import('child_process')).exec;
+  const getCmd = cmd => new Promise(resolve => exec(cmd, (err, out) => resolve(out ? out.trim() : '')));
+  const uptime = await getCmd('uptime');
+  const cpu = await getCmd("top -bn1 | grep 'Cpu(s)' | awk '{print $2}' | cut -d'%' -f1");
+  const mem = await getCmd("free -m | awk 'NR==2{printf \"%.1f%%\", $3*100/$2}'");
+  broadcastWS({ type: 'system_update', data: { uptime, cpu, memory: mem } });
+  res.json({ uptime, cpu, memory: mem });
+});
+
+app.get('/api/config', (req, res) => res.json(config));
+
+app.post('/api/upload', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded or file type not allowed' });
+  // Publish MQTT message for file upload success
+  const uploadMsg = JSON.stringify({
+    type: 'file_upload',
+    success: true,
+    filename: req.file.originalname,
+    full_path: req.file.path
+  });
+  mqttClient.publish('file/upload', uploadMsg);
+  res.json({ success: true, filename: req.file.originalname, full_path: req.file.path });
+});
+
+app.post('/api/action', express.json(), (req, res) => {
+  const { topic, payload, ack_topic } = req.body;
+  if (!topic) return res.status(400).json({ error: 'Missing topic' });
+
+  // Publish to MQTT
+  mqttClient.publish(topic, payload || '');
+
+  if (ack_topic) {
+    // Wait for ack on ack_topic (timeout 5s)
+    let responded = false;
+    const ackHandler = (ackTopic, message) => {
+      if (ackTopic === ack_topic) {
+        responded = true;
+        mqttClient.removeListener('message', ackHandler);
+        res.json({ ack: message.toString() });
+      }
+    };
+    mqttClient.on('message', ackHandler);
+    setTimeout(() => {
+      if (!responded) {
+        mqttClient.removeListener('message', ackHandler);
+        res.status(504).json({ error: 'Ack timeout' });
+      }
+    }, 5000);
+  } else {
+    res.json({ success: true });
+  }
+});
+
+app.get('/api/download/:filename', (req, res) => {
+  const filesTab = config.tabs.find(tab => tab.id === 'files');
+  const rootDir = filesTab?.download?.root_directory
+    ? path.isAbsolute(filesTab.download.root_directory)
+      ? filesTab.download.root_directory
+      : path.join(__dirname, filesTab.download.root_directory)
+    : path.join(__dirname, 'uploads');
+
+  // Support subdirectories in filename
+  let relPath = decodeURIComponent(req.params.filename || '');
+  relPath = relPath.replace(/\\/g, '/').replace(/\.\./g, '');
+  const absPath = path.join(rootDir, relPath);
+  console.log('Download request:', absPath);
+  if (!absPath.startsWith(rootDir)) {
+    return res.status(400).json({ error: 'Invalid path' });
+  }
+  if (fs.existsSync(absPath)) res.download(absPath, path.basename(absPath));
+  else res.status(404).json({ error: 'File not found' });
+});
+
+// --- File browser endpoint ---
+app.get('/api/browse', (req, res) => {
+  const filesTab = config.tabs.find(tab => tab.id === 'files');
+  const rootDir = filesTab?.download?.root_directory
+    ? path.isAbsolute(filesTab.download.root_directory)
+      ? filesTab.download.root_directory
+      : path.join(__dirname, filesTab.download.root_directory)
+    : path.join(__dirname, 'uploads');
+
+  // Get requested path, default to root
+  let relPath = req.query.path || '';
+  // Prevent directory traversal
+  relPath = relPath.replace(/\\/g, '/').replace(/\.\./g, '');
+  const absPath = path.join(rootDir, relPath);
+  if (!absPath.startsWith(rootDir)) {
+    return res.status(400).json({ error: 'Invalid path' });
+  }
+  fs.readdir(absPath, { withFileTypes: true }, (err, entries) => {
+    if (err) return res.status(500).json({ error: 'Failed to list directory' });
+    const directories = entries.filter(e => e.isDirectory()).map(e => e.name);
+    const files = entries.filter(e => e.isFile()).map(e => e.name);
+    res.json({
+      path: relPath,
+      directories,
+      files
+    });
+  });
+});
+
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', ws => {
+  ws.send(JSON.stringify({ type: 'init', sensors: latestSensorData }));
+});
+
+function broadcastWS(msg) {
+  const data = typeof msg === 'string' ? msg : JSON.stringify(msg);
+  wss.clients.forEach(client => {
+    if (client.readyState === 1) client.send(data);
+  });
+}
+
+function formatSensorData(topic, parsed) {
+  if (topic === 'sensor/gps' && parsed.position) {
+    return {
+      value: `${parsed.position.latitude.toFixed(6)}, ${parsed.position.longitude.toFixed(6)}`,
+      unit: parsed.unit || 'decimal_degrees',
+      timestamp: new Date().toISOString(),
+      description: 'GPS Location'
+    };
+  }
+  if (topic === 'sensor/temperature' && parsed.temperature !== undefined) {
+    return {
+      value: parsed.temperature,
+      unit: parsed.unit || '°C',
+      timestamp: new Date().toISOString(),
+      description: 'CPU Temperature'
+    };
+  }
+  if (topic === 'sensor/compass' && parsed.heading !== undefined) {
+    return {
+      value: parsed.heading,
+      unit: parsed.unit || 'degrees',
+      timestamp: new Date().toISOString(),
+      description: 'Compass Heading'
+    };
+  }
+  if (topic === 'sensor/status' && parsed.status !== undefined) {
+    // Status enum mapping
+    const statusMap = ['UNKNOWN', 'ONLINE', 'OFFLINE', 'ERROR'];
+    return {
+      value: statusMap[parsed.status] || 'UNKNOWN',
+      device_id: parsed.device_id || '',
+      message: parsed.message || '',
+      timestamp: parsed.timestamp ? new Date(Number(parsed.timestamp)).toISOString() : new Date().toISOString(),
+      description: 'Sensor Status'
+    };
+  }
+  return parsed;
+}
+
+const mqttClient = mqtt.connect(`mqtt://${config.broker.host}:${config.broker.port}`);
+mqttClient.on('connect', () => {
+  console.log('Connected to MQTT broker');
+  mqttClient.subscribe('sensor/#');
+});
+mqttClient.on('message', (topic, message) => {
+  // console.log(`MQTT message on ${topic}:`, message);
+  if (topic.startsWith('sensor/')) {
+    let parsed;
+    try {
+      if (topic === 'sensor/temperature' && sensorProto.decodeTemperatureData) {
+        parsed = sensorProto.decodeTemperatureData(message);
+      } else if (topic === 'sensor/compass' && sensorProto.decodeCompassData) {
+        parsed = sensorProto.decodeCompassData(message);
+      } else if (topic === 'sensor/gps' && sensorProto.decodeGpsPositionData) {
+        parsed = sensorProto.decodeGpsPositionData(message);
+      } else if (topic === 'sensor/status' && sensorProto.decodeStatusMessage) {
+        parsed = sensorProto.decodeStatusMessage(message);
+      } else {
+        parsed = { raw: message.toString('base64') };
+      }
+    } catch (e) {
+      parsed = { raw: message.toString('base64'), error: e.message };
+    }
+    const formatted = formatSensorData(topic, parsed);
+    updateLatestSensorData(topic, formatted);
+    broadcastWS({ type: 'sensor_update', sensor: topic.split('/')[1], data: formatted });
+  }
+});
+
+const PORT = 8000;
+server.listen(PORT, () => console.log(`Backend server running at http://localhost:${PORT}`)); 

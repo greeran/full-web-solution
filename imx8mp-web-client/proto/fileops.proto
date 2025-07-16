@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package fileops;
+
+message FileUploadRequest {
+  string filename = 1;
+  string extension = 2;
+  bytes file_data = 3;
+  string upload_directory = 4;
+}
+
+message FileUploadResult {
+  string filename = 1;
+  string full_path = 2;
+  bool success = 3;
+  string error_message = 4;
+} 

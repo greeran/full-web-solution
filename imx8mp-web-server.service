@@ -1,0 +1,32 @@
+[Unit]
+Description=IMX8MP Web Server
+After=network.target mosquitto.service
+Wants=mosquitto.service
+
+[Service]
+Type=simple
+User=linux-1
+Group=linux-1
+WorkingDirectory=/home/linux-1/projects/web-server-app
+ExecStart=/home/linux-1/projects/web-server-app/start_server.sh start
+ExecStop=/home/linux-1/projects/web-server-app/start_server.sh stop
+ExecReload=/home/linux-1/projects/web-server-app/start_server.sh restart
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=imx8mp-web-server
+
+# Environment variables
+Environment=PYTHONUNBUFFERED=1
+Environment=FLASK_ENV=production
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/home/linux-1/projects/web-server-app
+
+[Install]
+WantedBy=multi-user.target 

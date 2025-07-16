@@ -1,0 +1,33 @@
+
+
+   6  ./eiq-toolkit-v1.14.0.97-1_amd64_b250120.deb.bin 
+    7  apt-cache search whiptail
+    8  apt-get install whiptail
+    9  apt-get install lsb_release
+   10  apt-cache search lsb_release
+   11  apt-cache search lsb-release
+   12  apt-get install lsb-release
+   13  ./eiq-toolkit-v1.14.0.97-1_amd64_b250120.deb.bin 
+   14  apt-cache search sudo
+   15  apt-get install sudo
+   16  ./eiq-toolkit-v1.14.0.97-1_amd64_b250120.deb.bin 
+   17  ll
+   18  ll /usr/share/applications/ |grep eiq
+   19  cat /usr/share/applications/com.nxp.eiq-toolkit-v1.14.0.desktop
+   20  env UBUNTU_MENUPROXY=0 /opt/nxp/eIQ_Toolkit_v1.14.0/bin/eiqenv.sh | /opt/nxp/eIQ_Toolkit_v1.14.0/eiq-portal
+   21  ./eiq-toolkit-v1.14.0.97-1_amd64_b250120.deb.bin --nox11
+   22  env UBUNTU_MENUPROXY=0 /opt/nxp/eIQ_Toolkit_v1.14.0/bin/eiqenv.sh | /opt/nxp/eIQ_Toolkit_v1.14.0/eiq-portal
+   23  useradd -m test 
+   24  su test
+   25  python3
+   26  su test
+   27  cat /usr/share/applications/com.nxp.eiq-toolkit-v1.14.0.desktop
+   28  UBUNTU_MENUPROXY=0; source /opt/nxp/eIQ_Toolkit_v1.14.0/bin/eiqenv.sh
+   29  export TF_CPP_MIN_LOG_LEVEL=2
+   30  python3
+   31  eiq-converter --plugin eiq-converter-rtm --labels workspace\models
+   32  eiq-converter --plugin eiq-converter-rtm --labels workspace\models\mobilenet_v1_1.0_224\labels.txt mobilenet.h5 mobilenet.rtm
+   33  ls 
+   34  eiq-converter --plugin eiq-converter-tflite mobilenet.h5 mobilenet.tflite
+   35  ls -la 
+   36  history 
