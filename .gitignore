@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+*/node_modules/
+package-lock.json
+*/package-lock.json
+
+# Build outputs
+imx8mp-web-client/build/
+imx8mp-web-client/dist/
+build/
+dist/
+
+# Generated protobuf files
+backend/*_pb.js
+backend/*_pb.d.ts
+imx8mp-web-client/src/*_pb.js
+imx8mp-web-client/src/*_pb.d.ts
+
+# Runtime data
+server.log
+*.log
+logs/
+*.pid
+*.seed
+*.pid.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+.history/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Upload and download directories
+uploads/
+downloads/
+backend/uploads/
+backend/downloads/
+
+# Test files
+test_protobuf.js
+test_protobuf_endpoints.mjs
+downloaded_test_upload.txt
+
+# Old/backup files
+upload_server.js
+backend/backend/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
