@@ -146,11 +146,36 @@ app.post('/api/download', express.raw({ type: 'application/octet-stream', limit:
 // --- Protobuf Actions Endpoint ---
 app.post('/api/action', express.raw({ type: 'application/octet-stream', limit: '1mb' }), (req, res) => {
   try {
+    console.log('=== ACTION REQUEST RECEIVED ===');
+    console.log('Request body length:', req.body.length);
+    console.log('Request headers:', req.headers);
+    
     const actionReq = actionsProto.decodeActionRequest(new Uint8Array(req.body));
-    mqttClient.publish(actionReq.topic, actionReq.payload || '');
+    console.log('Decoded action request:', {
+      topic: actionReq.topic,
+      payload: actionReq.payload,
+      ack_topic: actionReq.ack_topic
+    });
+    
+    // Check MQTT connection status
+    console.log('MQTT client connected:', mqttClient.connected);
+    console.log('MQTT client state:', mqttClient.connected ? 'connected' : 'disconnected');
+    
+    if (!mqttClient.connected) {
+      console.log('MQTT client not connected, attempting to reconnect...');
+      mqttClient.reconnect();
+    }
+    
+    // Publish the message
+    const publishResult = mqttClient.publish(actionReq.topic, actionReq.payload || '');
+    console.log(`Published to topic: ${actionReq.topic}, payload: "${actionReq.payload || 'empty'}"`);
+    console.log('Publish result:', publishResult);
+    
     if (actionReq.ack_topic) {
+      console.log('Waiting for ack on topic:', actionReq.ack_topic);
       let responded = false;
       const ackHandler = (ackTopic, message) => {
+        console.log('Received ack message on topic:', ackTopic, 'message:', message.toString());
         if (ackTopic === actionReq.ack_topic) {
           responded = true;
           mqttClient.removeListener('message', ackHandler);
@@ -159,6 +184,7 @@ app.post('/api/action', express.raw({ type: 'application/octet-stream', limit: '
             success: true,
             error: ''
           });
+          console.log('Sending ack response');
           res.set('Content-Type', 'application/octet-stream');
           res.send(ackBuffer);
         }
@@ -166,6 +192,7 @@ app.post('/api/action', express.raw({ type: 'application/octet-stream', limit: '
       mqttClient.on('message', ackHandler);
       setTimeout(() => {
         if (!responded) {
+          console.log('Ack timeout after 5 seconds');
           mqttClient.removeListener('message', ackHandler);
           const ackBuffer = actionsProto.encodeActionAck({
             ack: '',
@@ -177,6 +204,7 @@ app.post('/api/action', express.raw({ type: 'application/octet-stream', limit: '
         }
       }, 5000);
     } else {
+      console.log('No ack topic specified, sending immediate response');
       const ackBuffer = actionsProto.encodeActionAck({
         ack: 'Action sent',
         success: true,
@@ -186,6 +214,9 @@ app.post('/api/action', express.raw({ type: 'application/octet-stream', limit: '
       res.send(ackBuffer);
     }
   } catch (err) {
+    console.error('=== ACTION ENDPOINT ERROR ===');
+    console.error('Error:', err);
+    console.error('Error stack:', err.stack);
     const ackBuffer = actionsProto.encodeActionAck({
       ack: '',
       success: false,

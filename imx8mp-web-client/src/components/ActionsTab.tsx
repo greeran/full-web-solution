@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Card, Row, Col, Button, Form, Alert, Spinner } from 'react-bootstrap';
+import * as protobuf from 'protobufjs';
 
 interface ActionConfig {
   button_name: string;
@@ -17,6 +18,13 @@ interface ActionsTabProps {
   };
 }
 
+// Define the protobuf message interface
+interface ActionAckMessage {
+  ack: string;
+  success: boolean;
+  error: string;
+}
+
 const ActionsTab: React.FC<ActionsTabProps> = ({ config }) => {
   const [inputs, setInputs] = useState<{ [key: number]: string }>({});
   const [loading, setLoading] = useState<{ [key: number]: boolean }>({});
@@ -31,29 +39,42 @@ const ActionsTab: React.FC<ActionsTabProps> = ({ config }) => {
     setLoading(prev => ({ ...prev, [idx]: true }));
     setAck(prev => ({ ...prev, [idx]: null }));
     setError(prev => ({ ...prev, [idx]: null }));
+    
     try {
+      // Load protobuf schema
+      const root = await protobuf.load('/proto/actions.proto');
+      const ActionRequest = root.lookupType('actions.ActionRequest');
+      const ActionAck = root.lookupType('actions.ActionAck');
+
+      // Create protobuf request
+      const requestData = {
+        topic: action.publish_topic,
+        payload: action.text_input ? inputs[idx] || '' : '',
+        ack_topic: action.subscribe_ack_topic || ''
+      };
+
+      // Encode request
+      const requestBuffer = ActionRequest.encode(ActionRequest.create(requestData)).finish();
+
+      // Send request
       const res = await fetch('http://localhost:8000/api/action', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          topic: action.publish_topic,
-          payload: action.text_input ? inputs[idx] || '' : '',
-          ack_topic: action.subscribe_ack_topic || undefined
-        })
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: requestBuffer
       });
-      const data = await res.json();
-      if (action.subscribe_ack_topic) {
-        if (res.ok && data.ack) {
-          setAck(prev => ({ ...prev, [idx]: `Ack: ${data.ack}` }));
-        } else {
-          setError(prev => ({ ...prev, [idx]: data.error || 'No ack received' }));
-        }
+
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+
+      // Decode response
+      const responseBuffer = await res.arrayBuffer();
+      const ackData = ActionAck.decode(new Uint8Array(responseBuffer)) as unknown as ActionAckMessage;
+
+      if (ackData.success) {
+        setAck(prev => ({ ...prev, [idx]: ackData.ack || 'Action sent!' }));
       } else {
-        if (res.ok) {
-          setAck(prev => ({ ...prev, [idx]: 'Action sent!' }));
-        } else {
-          setError(prev => ({ ...prev, [idx]: data.error || 'Error sending action' }));
-        }
+        setError(prev => ({ ...prev, [idx]: ackData.error || 'Action failed' }));
       }
     } catch (err: any) {
       setError(prev => ({ ...prev, [idx]: err.message || 'Network error' }));
